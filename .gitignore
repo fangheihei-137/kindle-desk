@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+kindle-standalone/data/
+**/wireless-device.json
+**/backups/
+**/updates/
+*.log
+dist/
+.DS_Store
+Thumbs.db
+kindle-standalone/界面预览/
+kindle-standalone/assets/*.ttc
+kindle-standalone/assets/arial*.ttf
+kindle-standalone/assets/msyh*

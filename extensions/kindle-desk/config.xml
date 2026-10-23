@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension>
+  <information><name>Kindle Desk</name><version>0.1.0</version><author>Kindle Desk contributors</author><id>kindle-desk</id></information>
+  <menus><menu type="json" dynamic="false">menu.json</menu></menus>
+</extension>

@@ -1,0 +1,4 @@
+Pinyin data: https://github.com/rime/rime-pinyin-simp
+Derived from Android Pinyin IME, Apache License 2.0.
+Modified for this dashboard: spaces removed from codes; sorted by weight; split by initial letter.
+Original SHA256: e341598343a0f0f2035bb1aafc34a7f3bb7887deeecb3f60796262aaa2983e6b
