@@ -70,9 +70,10 @@ class FeatureTests(unittest.TestCase):
     def test_history_tap_pagination_detail_and_return(self):
         self.a.state['news']=[self.news(i,i/10) for i in range(14)]
         self.a.frame(capture=True)
-        self.assertEqual(self.a.tap_action(130,360),'news_history')
-        self.assertEqual(self.a.tap_action(480,360),'refresh_news')
-        self.a.handle_action('news_history'); self.a.frame(capture=True)
+        self.assertEqual(self.a.tap_action(130,360),'panel_detail')
+        self.assertEqual(self.a.tap_action(480,360),'module_picker')
+        self.assertEqual(self.a.tap_action(550,360),'panel_refresh')
+        self.a.handle_action(self.a.tap_action(130,360)); self.a.frame(capture=True)
         self.assertFalse(self.a.news_wake.is_set())
         self.assertEqual(self.a.news_list_total,3)
         self.a.handle_action(self.a.tap_action(490,690)); self.a.frame(capture=True)

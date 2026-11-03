@@ -25,4 +25,6 @@ ui.render_calendar(fixture(),moment.year,moment.month,moment).save(out/'calendar
 ui.render_weather(state,moment).save(out/'weather.png')
 form=native_input.NativeForm('todo',0); form.values['title']='整理本周阅读笔记'
 native_input.render(form).save(out/'native-input.png')
-print('Six public demo screens rendered from synthetic data.')
+ui.render_module_picker(fixture()).save(out/'modules.png')
+ui.render_screensaver(fixture(),dict(system_sleep=True),moment).save(out/'standby-calendar.png')
+print('Eight public demo screens rendered from synthetic data.')

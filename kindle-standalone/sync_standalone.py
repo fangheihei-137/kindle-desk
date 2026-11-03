@@ -7,7 +7,7 @@ from datetime import datetime
 import ast, hashlib, os, shutil, sys, json
 
 ROOT=Path(__file__).resolve().parent
-PROGRAM=['app.py','pages.py','renderer.py','store.py','native_input.py','updater.py','start.sh']
+PROGRAM=['app.py','pages.py','renderer.py','store.py','native_input.py','device_control.py','modules.py','phone.py','updater.py','start.sh']
 LIBRARY_ENTRY='IndependentDashboard.sh'
 
 def find_kindle():
@@ -43,15 +43,16 @@ def preflight(base):
     application=Application(root=base,native=False)
     frame=application.frame(capture=True)
     if frame.size!=(600,800) or frame.mode!='L': raise RuntimeError('画面检查失败，程序尚未同步。')
-    for mode in ('todos','agenda','calendar','weather','news_history','pomodoro'):
+    for mode in ('todos','agenda','calendar','weather','news_history','pomodoro','settings','wifi','screensaver','module_picker','module'):
         application.mode=mode
         frame=application.frame(capture=True)
         if frame.size!=(600,800) or frame.mode!='L': raise RuntimeError(mode+' 画面检查失败，程序尚未同步。')
     import native_input
     if not native_input.pinyin_candidates('nihao'): raise RuntimeError('拼音词库缺失，程序尚未同步。')
-    form=native_input.NativeForm('event',application.store.read()['revision'])
-    if native_input.render(form).size!=(600,800): raise RuntimeError('新增界面检查失败。')
-    print('  已用 Kindle 当前数据检查首页、待办、日程、日历及天气详情。')
+    for kind in ('event','city','wifi'):
+        form=native_input.NativeForm(kind,application.store.read()['revision'])
+        if native_input.render(form).size!=(600,800): raise RuntimeError(kind+' 输入界面检查失败。')
+    print('  已用 Kindle 当前数据检查首页、日程、天气、设置、Wi-Fi 及屏保。')
 
 def sync():
     kindle=find_kindle()

@@ -36,7 +36,7 @@ class NativeForm:
         self.field='title'
         self.cursor=len(self.values['title'])
         self.selected=False
-        self.language='zh'
+        self.language='en' if kind=='wifi' else 'zh'
         self.upper=False
         self.composition=''
         self.candidate_page=0
@@ -60,7 +60,8 @@ class NativeForm:
         value=self.values[self.field]
         base='' if self.selected else value
         cursor=0 if self.selected else self.cursor
-        limit={'title':100,'note':200,'date':10,'time':5}[self.field]
+        title_limit=80 if self.kind=='city' else 32 if self.kind=='wifi' else 100
+        limit={'title':title_limit,'note':63 if self.kind=='wifi' else 200,'date':10,'time':5}[self.field]
         if len(base)+len(text)>limit:
             self.message='内容已到字数上限。'; return False
         self.values[self.field]=base[:cursor]+text+base[cursor:]
@@ -131,10 +132,20 @@ class NativeForm:
             else: self.values['time']=value
             self.cursor=len(self.values[self.field]); self.selected=True
         elif op=='next':
-            fields=['title','note']+(['date','time'] if self.kind=='event' else [])
+            fields=['title'] if self.kind=='city' else ['title','note']+(['date','time'] if self.kind=='event' else [])
             self.focus(fields[(fields.index(self.field)+1)%len(fields)])
 
     def validate(self):
+        if self.kind=='city': return
+        if self.kind=='wifi':
+            ssid=self.values['title']
+            password=self.values['note']
+            if not ssid.strip(): raise ValueError('请填写 Wi-Fi 名称。')
+            if len(ssid.encode('utf-8'))>32: raise ValueError('Wi-Fi 名称的 UTF-8 编码不能超过 32 字节。')
+            if any(ord(ch)<32 or ord(ch)==127 for ch in ssid): raise ValueError('Wi-Fi 名称包含无效字符。')
+            if password and (not 8<=len(password)<=63 or any(ord(ch)<32 or ord(ch)>126 for ch in password)):
+                raise ValueError('WPA 密码须为 8–63 个可打印英文字符；开放网络请留空。')
+            return
         if not self.values['title'].strip(): raise ValueError('请填写内容后再保存。')
         if self.kind=='event':
             try: datetime.strptime(self.values['date'],'%Y-%m-%d')
@@ -147,6 +158,8 @@ def field_boxes(form):
     if form.kind=='event':
         return [('date',(30,82,344,142)),('time',(362,82,570,142)),
                 ('title',(30,161,570,237)),('note',(30,255,570,331))]
+    if form.kind=='city': return [('title',(30,90,570,185))]
+    if form.kind=='wifi': return [('title',(30,82,570,157)),('note',(30,190,570,265))]
     return [('title',(30,90,570,185)),('note',(30,207,570,331))]
 
 def keyboard_buttons(form):
@@ -199,15 +212,19 @@ def tap(form,x,y):
 def render(form):
     image=ui.Image.new('L',(600,800),255); d=ui.ImageDraw.Draw(image)
     heading=('修改' if form.identity else '新增')+('日程' if form.kind=='event' else '待办')
+    if form.kind=='city': heading='设置天气城市'
+    elif form.kind=='wifi': heading='连接 Wi-Fi'
     d.text((30,27),heading,font=ui.font(28,True),fill=0,anchor='lt')
     if form.identity:
         ui.icon_button(d,(450,22,570,67),'check' if form.delete_confirm else 'trash',25)
     names=dict(date='日期',time='时间 · 空为全天',title='内容',note='备注 · 可选')
+    if form.kind=='city': names['title']='城市 · 支持中文、拼音或英文，留空自动定位'
+    elif form.kind=='wifi': names.update(title='Wi-Fi 名称（SSID）',note='密码 · 开放网络留空')
     for name,box in field_boxes(form):
         active=name==form.field; x,y,x2,y2=box
         d.rectangle(box,outline=0 if active else 160,width=3 if active else 1)
         d.text((x+12,y+8),names[name],font=ui.font(14,True),fill=60,anchor='lt')
-        value=form.values[name]
+        value='*'*len(form.values[name]) if form.kind=='wifi' and name=='note' else form.values[name]
         if active:
             if form.selected: shown=value or '全天'
             else: shown=value[:form.cursor]+'│'+value[form.cursor:]
@@ -224,6 +241,8 @@ def render(form):
     if form.field in ('date','time'):
         hint='格式 2026-10-22 · 输入数字将替换选中日期' if form.field=='date' else '格式 09:30 · 点「全天」可清空时间'
     elif form.composition: hint='拼音：'+form.composition
+    elif form.kind=='city': hint='保存后立即更新天气；留空使用网络自动定位'
+    elif form.kind=='wifi' and form.field=='note': hint='WPA 密码 8–63 个英文字符；开放网络留空'
     else: hint={'zh':'中文拼音 · 输入后点候选字','en':'英文 · 直接输入','number':'数字','symbol':'符号'}[form.language]
     d.text((30,359),ui.fit_text(d,hint,17,540 if form.language!='en' else 355),font=ui.font(17),fill=0,anchor='lt')
     if form.language=='en':
@@ -242,5 +261,5 @@ def render(form):
             d.text(((box[0]+box[2])/2,box[1]+14),ui.fit_text(d,label,size,box[2]-box[0]-8),font=ui.font(size),fill=0,anchor='mt')
     hint=form.message or ('勾号保存 · 中文拼音用 v 输入 ü' if form.language=='zh' else '勾号保存')
     d.text((30,695),ui.fit_text(d,hint,16,540),font=ui.font(16),fill=0,anchor='lt')
-    ui._draw_buttons(d,('放弃' if form.cancel_confirm else '取消','下一项','保存'))
+    ui._draw_buttons(d,('放弃' if form.cancel_confirm else '取消','' if form.kind=='city' else '下一项','保存'))
     return image

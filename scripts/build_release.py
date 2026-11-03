@@ -3,10 +3,10 @@ import hashlib,json,zipfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 APP=ROOT/'kindle-standalone'
-VERSION='0.1.0'
+VERSION='2.0.0'
 
 def release_files():
-    names=['README.md','LICENSE','THIRD_PARTY_NOTICES.md','requirements.txt','install.py','.gitignore','.gitattributes']
+    names=['README.md','CHANGELOG.md','LICENSE','THIRD_PARTY_NOTICES.md','requirements.txt','install.py','.gitignore','.gitattributes']
     for path in APP.iterdir():
         if path.is_file() and path.suffix in ('.py','.pyw','.sh','.cmd'): names.append(path.relative_to(ROOT).as_posix())
     for folder in ('kindle-standalone/assets','kindle-standalone/vendor','extensions','docs','scripts','tests','.github'):

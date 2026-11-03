@@ -541,6 +541,14 @@ def news_items(value):
     if not isinstance(value,list): return []
     return [item for item in value if isinstance(item,dict) and isinstance(item.get('name'),str) and item['name'].strip()][:NEWS_LIMIT]
 
+def enabled_news(config,items):
+    settings=config.get('settings') or {}
+    sources={
+        '华尔街见闻':settings.get('news_wallstreetcn',True),
+        '东方财富':settings.get('news_eastmoney',True),
+    }
+    return [item for item in items if sources.get(item.get('source'),True)]
+
 def merge_news_history(previous,incoming=(),current=None,fallback=None):
     """Bound history by publication age; unknown dates expire from first seen."""
     stamp=(current or now()).timestamp()
@@ -567,14 +575,27 @@ def merge_news_history(previous,incoming=(),current=None,fallback=None):
         unique[key]=item
     return sorted(unique.values(),key=lambda v:v['time'] or v['seen_at'],reverse=True)[:NEWS_LIMIT]
 
-def fmt_news_time(value,current):
+def clock_text(moment,time_format='24'):
+    if time_format=='12':
+        suffix='AM' if moment.hour<12 else 'PM'
+        return f'{moment.hour%12 or 12:02d}:{moment.minute:02d} {suffix}'
+    return moment.strftime('%H:%M')
+
+def event_time(value,time_format='24'):
+    if not value: return '全天'
+    try: return clock_text(datetime.strptime(str(value),'%H:%M'),time_format)
+    except (TypeError,ValueError): return str(value)
+
+def fmt_news_time(value,current,time_format='24'):
     try: moment=datetime.fromtimestamp(int(value),TZ)
     except (TypeError,ValueError,OSError,OverflowError): return ''
-    if moment.date()==current.date(): return moment.strftime('%H:%M')
+    if moment.date()==current.date(): return clock_text(moment,time_format)
     return moment.strftime('%m/%d')
 
-def fmt_news_full(value):
-    try: return datetime.fromtimestamp(int(value),TZ).strftime('%m-%d %H:%M')
+def fmt_news_full(value,time_format='24'):
+    try:
+        moment=datetime.fromtimestamp(int(value),TZ)
+        return moment.strftime('%m-%d')+' '+clock_text(moment,time_format)
     except (TypeError,ValueError,OSError,OverflowError): return ''
 
 _MEASURE=ImageDraw.Draw(Image.new('L',(8,8)))
@@ -608,9 +629,9 @@ def future_events(config,current):
 
 BUTTON_ICONS={'返回':'back','取消':'back','放弃':'close','上一页':'prev','下一页':'next',
               '上个月':'prev','下个月':'next','本月':'today','新增':'plus','日历':'calendar',
-              '全部日程':'list','刷新':'refresh','修改':'edit','删除':'trash','确认删除':'check',
-              '保存':'check','下一项':'next_field','暂停':'pause','继续':'play','开始':'play',
-              '重置':'reset','再来一轮':'reset'}
+              '全部日程':'list','刷新':'refresh','扫描':'refresh','修改':'edit','删除':'trash',
+              '确认删除':'check','保存':'check','下一项':'next_field','暂停':'pause','继续':'play',
+              '开始':'play','重置':'reset','再来一轮':'reset','立即待机':'standby'}
 
 def action_icon(d,name,cx,cy,size=28,fill=0):
     """Stroke icons do not depend on Unicode glyph coverage on the Kindle."""
@@ -655,6 +676,22 @@ def action_icon(d,name,cx,cy,size=28,fill=0):
         else:
             d.arc(box((4,4,28,28)),220,500,fill=fill,width=width)
             line((4,2,5,12,14,9))
+    elif name=='settings':
+        for angle in range(0,360,45):
+            a=math.radians(angle)
+            line((16+8*math.cos(a),16+8*math.sin(a),16+14*math.cos(a),16+14*math.sin(a)))
+        d.ellipse(box((8,8,24,24)),outline=fill,width=width)
+        d.ellipse(box((13,13,19,19)),outline=fill,width=width)
+    elif name=='wifi':
+        d.arc(box((3,11,29,37)),225,315,fill=fill,width=width)
+        d.arc(box((8,16,24,32)),225,315,fill=fill,width=width)
+        d.ellipse(box((14,22,18,26)),fill=fill)
+    elif name=='phone':
+        d.rounded_rectangle(box((7,2,25,30)),radius=max(1,round(3*scale)),outline=fill,width=width)
+        line((13,6,19,6)); d.ellipse(box((15,25,17,27)),fill=fill)
+    elif name=='standby':
+        d.arc(box((5,5,27,27)),-45,225,fill=fill,width=width)
+        line((16,2,16,16))
     elif name=='space': line((5,12,5,23,27,23,27,12))
     elif name=='backspace':
         d.polygon(box((2,16,10,6,30,6,30,26,10,26)),outline=fill)
@@ -674,14 +711,16 @@ def _draw_buttons(d,labels):
             d.rectangle((x,728,x+172,777),outline=0,width=2)
             d.text((x+86,742),label,font=font(18,True),fill=0,anchor='mt')
 
-def render_news_detail(item,page,pages,current=None):
+def render_news_detail(item,page,pages,current=None,time_format='24'):
     current=current or now()
     image=Image.new('L',(600,800),255)
     d=ImageDraw.Draw(image)
-    d.text((30,25),'AI 金融资讯',font=font(20,True),fill=0,anchor='lt')
-    when=fmt_news_full(item.get('time'))
-    meta=(item.get('source') or '')+((' · '+when) if when else '')
-    d.text((570,28),meta,font=font(14),fill=80,anchor='rt')
+    weibo=item.get('source')=='微博热搜'
+    d.text((30,25),'微博热搜' if weibo else 'AI 金融资讯',font=font(20,True),fill=0,anchor='lt')
+    when=fmt_news_full(item.get('time'),time_format)
+    meta=('加载中' if item.get('detail_loading') else '相关新闻摘要') if weibo else (item.get('source') or '')+((' · '+when) if when else '')
+    d.text((502 if weibo else 570,28),fit_text(d,meta,14,300 if weibo else 360),font=font(14),fill=80,anchor='rt')
+    if weibo: action_icon(d,'refresh',551,36,26,160 if item.get('detail_loading') else 0)
     d.line((30,58,570,58),fill=0,width=2)
     total=max(1,len(pages))
     page=max(0,min(page,total-1))
@@ -693,7 +732,7 @@ def render_news_detail(item,page,pages,current=None):
     _draw_buttons(d,('返回','上一页' if page>0 else '','下一页' if page<total-1 else ''))
     return image
 
-def render_event_detail(event,confirm,current=None,message=''):
+def render_event_detail(event,confirm,current=None,message='',time_format='24'):
     current=current or now()
     image=Image.new('L',(600,800),255)
     d=ImageDraw.Draw(image)
@@ -705,7 +744,7 @@ def render_event_detail(event,confirm,current=None,message=''):
     except (ValueError,KeyError):
         dlabel=event.get('date','')
     d.text((30,95),dlabel,font=font(34,True),fill=0,anchor='lt')
-    d.text((30,160),event.get('time') or '全天',font=font(26,True),fill=0,anchor='lt')
+    d.text((30,160),event_time(event.get('time'),time_format),font=font(26,True),fill=0,anchor='lt')
     y=225
     bottom=520 if confirm or message else 680
     truncated=False
@@ -790,19 +829,21 @@ def compact_weather(d,state,current):
         label='点此查看预报 ›'
     d.text((30,305),label,font=font(14),fill=75,anchor='lt')
 
-MAIN_PHONE=(310,707,430,762)
-MAIN_EXIT=(450,707,570,762)
+MAIN_PHONE=(310,707,390,762)
+MAIN_SETTINGS=(400,707,480,762)
+MAIN_EXIT=(490,707,570,762)
 
 def inside(x,y,box): return box[0]<=x<box[2] and box[1]<=y<box[3]
 
 def draw_main_icons(d):
-    for box in (MAIN_PHONE,MAIN_EXIT): d.rounded_rectangle(box,radius=8,outline=0,width=2)
-    # A phone and an open door with an outward arrow.
-    d.rounded_rectangle((358,716,383,753),radius=4,outline=0,width=3)
-    d.line((366,747,375,747),fill=0,width=2)
-    d.line((503,717,490,717,490,752,503,752),fill=0,width=3)
-    d.line((504,734,532,734,523,725),fill=0,width=3)
-    d.line((532,734,523,743),fill=0,width=3)
+    for box in (MAIN_PHONE,MAIN_SETTINGS,MAIN_EXIT):
+        d.rounded_rectangle(box,radius=8,outline=0,width=2)
+    d.rounded_rectangle((338,716,363,753),radius=4,outline=0,width=3)
+    d.line((346,747,355,747),fill=0,width=2)
+    action_icon(d,'settings',440,734.5,30)
+    d.line((523,717,510,717,510,752,523,752),fill=0,width=3)
+    d.line((524,734,552,734,543,725),fill=0,width=3)
+    d.line((552,734,543,743),fill=0,width=3)
 
 def section_frame(title,subtitle=''):
     image=Image.new('L',(600,800),255); d=ImageDraw.Draw(image)
@@ -847,28 +888,28 @@ def all_events(config,day=None):
     if day: events=[e for e in events if e['date']==day]
     return sorted(events,key=lambda e:(e['date'],e.get('time',''),e['id']))
 
-def render_agenda(config,page=0,day=None):
+def render_agenda(config,page=0,day=None,time_format='24'):
     events,page,total=page_slice(all_events(config,day),page)
     title=day.replace('-',' / ') if day else '全部日程'
     image,d=section_frame(title,f'共 {len(all_events(config,day))} 项 · 点条目查看详情')
     if not events: d.text((30,155),'暂无日程，点下方加号新增。',font=font(23),fill=0,anchor='lt')
     for i,event in enumerate(events):
         y=125+i*85
-        d.text((30,y),event['date']+'  '+(event.get('time') or '全天'),font=font(17,True),fill=65,anchor='lt')
+        d.text((30,y),event['date']+'  '+event_time(event.get('time'),time_format),font=font(17,True),fill=65,anchor='lt')
         d.text((30,y+30),fit_text(d,event['title'],23,540,True),font=font(23,True),fill=0,anchor='lt')
         d.line((30,y+80,570,y+80),fill=205,width=1)
     pager(d,page,total)
     _draw_buttons(d,('返回','新增','日历'))
     return image
 
-def render_news_history(items,page=0,refreshing=False):
+def render_news_history(items,page=0,refreshing=False,time_format='24',title='AI 金融资讯',history=True):
     selected,page,total=page_slice(items,page)
-    subtitle='正在更新资讯…' if refreshing else f'最近 48 小时 · 共 {len(items)} 条 · 点条目阅读全文'
-    image,d=section_frame('金融资讯 · 历史',subtitle)
+    subtitle='正在更新资讯…' if refreshing else ('最近 48 小时' if history else '当前榜单')+f' · 共 {len(items)} 条 · 点条目查看'
+    image,d=section_frame(title+(' · 历史' if history else ' · 全部'),subtitle)
     if not selected: d.text((30,155),'最近 48 小时暂无已缓存资讯。',font=font(22),fill=0,anchor='lt')
     for i,item in enumerate(selected):
         y=125+i*85
-        meta=fmt_news_full(item.get('time')) or '获取于 '+fmt_news_full(item.get('seen_at'))
+        meta=fmt_news_full(item.get('time'),time_format) or '获取于 '+fmt_news_full(item.get('seen_at'),time_format)
         d.text((30,y),fit_text(d,meta+' · '+item.get('source',''),16,540),font=font(16),fill=75,anchor='lt')
         for j,line in enumerate(wrap_lines(' '.join(item['name'].split()),20,540)[:2]):
             d.text((30,y+25+j*24),line,font=font(20),fill=0,anchor='lt')
@@ -884,7 +925,7 @@ def render_pomodoro(timer):
     state=timer['state']; remaining=timer['remaining']
     duration=timer.get('duration',2700)
     minutes=max(0,math.ceil(remaining/60))
-    label={'idle':'设置时长','running':'专注中','paused':'已暂停','done':'专注完成'}[state]
+    label={'idle':'设置时长','running':'专注中 · 保持唤醒','paused':'已暂停','done':'专注完成'}[state]
     image,d=section_frame('番茄钟',label)
     circle=(110,160,490,540)
     fraction=max(0,min(1,remaining/max(1,duration)))
@@ -902,7 +943,9 @@ def render_pomodoro(timer):
     elif state!='done':
         d.text((300,603),f'本轮 {round(duration/60)} 分钟',font=font(20),fill=75,anchor='mt')
     toggle='暂停' if state=='running' else '继续' if state=='paused' else '开始' if state=='idle' else ''
-    _draw_buttons(d,('返回',toggle,'重置' if state!='idle' else ''))
+    if state=='running':
+        d.text((300,657),'暂停后可返回看板',font=font(17),fill=85,anchor='mt')
+    _draw_buttons(d,('' if state=='running' else '返回',toggle,'重置' if state!='idle' else ''))
     return image
 
 def month_days(year,month):
@@ -948,13 +991,14 @@ def weather_rows(state,current=None):
         rows.append(row)
     return rows[:7]
 
-def render_weather(state,current=None):
+def render_weather(state,current=None,time_format='24'):
     current=current or now()
     location=state.get('location')
     name=str(location.get('name') or '天气') if isinstance(location,dict) else '天气'
     at=parsed_time(state.get('weather_at'))
     stale=bool(state.get('error')) or not at or (current-at).total_seconds()>1800
-    subtitle=('缓存预报 · ' if stale else '更新于 ')+(at.strftime('%m-%d %H:%M') if at else '等待联网')
+    update_text=at.strftime('%m-%d')+' '+clock_text(at,time_format) if at else '等待联网'
+    subtitle=('缓存预报 · ' if stale else '更新于 ')+update_text
     if state.get('weather_refreshing'): subtitle='正在刷新天气…'
     image,d=section_frame(fit_text(_MEASURE,name+' · 未来天气',28,540,True),subtitle)
     weather=state.get('weather')
@@ -978,8 +1022,263 @@ def render_weather(state,current=None):
     _draw_buttons(d,('返回','刷新',''))
     return image
 
+SETTINGS_TABS=('content','display','network')
+SETTINGS_ROWS=[(30,180+i*80,570,240+i*80) for i in range(6)]
+SETTINGS_TAB_BOXES=[(30+i*184,116,202+i*184,160) for i in range(3)]
+SETTINGS_STANDBY=(214,728,386,777)
+PHOTO_BOXES=[(30+(i%2)*280,125+(i//2)*255,290+(i%2)*280,365+(i//2)*255) for i in range(4)]
+
+
+def settings_hitboxes(page):
+    actions={
+        'content':['module_picker',('setting_cycle','module_interval'),('setting','news_wallstreetcn'),('setting','news_eastmoney'),('photos','panel'),'pair'],
+        'display':[('setting_cycle','time_format'),('setting_cycle','full_refresh'),('setting_cycle','sleep_display'),('photos','standby'),('setting_cycle','idle_minutes'),('setting','standby_wifi')],
+        'network':['wifi','pair','city_editor',('setting_cycle','weather_interval')],
+    }
+    return list(zip(SETTINGS_TAB_BOXES,[('settings_tab',key) for key in SETTINGS_TABS]))+list(zip(SETTINGS_ROWS,actions.get(page,actions['content'])))+[(SETTINGS_STANDBY,'standby'),((398,728,570,777),'pair')]
+
+
+def render_settings(config,state,wifi_status=None,power_available=True,page='content',photos=None):
+    import modules
+    settings=config.get('settings') or {}
+    image,d=section_frame('本机设置','轻触项目修改 · 周期选项依次切换')
+    action_icon(d,'settings',540,45,30,90)
+    for key,label,box in zip(SETTINGS_TABS,('内容','显示·待机','网络·天气'),SETTINGS_TAB_BOXES):
+        active=key==page
+        d.rounded_rectangle(box,radius=6,fill=0 if active else 255,outline=0,width=2)
+        d.text(((box[0]+box[2])//2,138),label,font=font(19,True),fill=255 if active else 0,anchor='mm')
+
+    def row(index,label,value,toggle=None):
+        box=SETTINGS_ROWS[index]; middle=(box[1]+box[3])//2
+        d.rounded_rectangle(box,radius=6,outline=125,width=2)
+        d.text((48,middle),label,font=font(20,True),fill=0,anchor='lm')
+        if toggle is None:
+            d.text((515,middle),fit_text(d,str(value),17,260),font=font(17),fill=65,anchor='rm')
+            action_icon(d,'next',546,middle,16,100)
+        else:
+            d.text((500,middle),'开启' if toggle else '关闭',font=font(17),fill=70,anchor='rm')
+            checkbox(d,520,middle-14,28,toggle)
+
+    def photo_name(key):
+        return next((item['name'] for item in photos or [] if item['id']==settings.get(key)),'选择图片')
+
+    if page=='display':
+        row(0,'时间格式',str(settings.get('time_format','24'))+' 小时')
+        row(1,'全刷频率',f"每 {settings.get('full_refresh',10)} 次变化")
+        row(2,'待机画面','全屏图片' if settings.get('sleep_display')=='photo' else '日历与日程')
+        row(3,'待机图片',photo_name('standby_photo'))
+        idle=settings.get('idle_minutes',15)
+        row(4,'自动待机','关闭' if idle==0 else f'{idle} 分钟')
+        row(5,'待机断网','',bool(settings.get('standby_wifi',True)))
+        hint='图片等比铺满 · 番茄钟运行中保持唤醒'
+    elif page=='network':
+        wifi=wifi_status or {}
+        label=wifi.get('ssid') or ('已关闭' if wifi.get('enabled') is False else '未连接' if wifi.get('enabled') else '读取中')
+        row(0,'Wi-Fi',label)
+        row(1,'手机连接','扫码管理')
+        row(2,'天气城市',config.get('city') or (state.get('location') or {}).get('name') or '自动定位')
+        row(3,'天气刷新',f"{settings.get('weather_interval',15)} 分钟")
+        d.text((48,528),'城市留空，使用网络定位。',font=font(18),fill=75,anchor='lt')
+        d.text((48,566),'切换 Wi-Fi 后请重新扫码连接手机。',font=font(18),fill=75,anchor='lt')
+        hint='设备休眠时暂停联网，唤醒后恢复'
+    else:
+        row(0,'中间模块',modules.TITLES.get(modules.selected(config),'AI 金融资讯'))
+        row(1,'模块刷新',f"{settings.get('module_interval',30)} 分钟")
+        row(2,'华尔街见闻','',bool(settings.get('news_wallstreetcn',True)))
+        row(3,'东方财富','',bool(settings.get('news_eastmoney',True)))
+        row(4,'模块图片',photo_name('panel_photo'))
+        row(5,'账户与上传','手机管理')
+        hint='金融资讯每小时更新 · Codex 由电脑同步'
+    d.text((300,679),hint,font=font(15),fill=80,anchor='mt')
+    if not power_available:
+        d.text((300,705),'电源键未识别时可轻触屏幕唤醒',font=font(13),fill=100,anchor='mt')
+    icon_button(d,(30,728,202,777),'back')
+    icon_button(d,SETTINGS_STANDBY,'standby')
+    icon_button(d,(398,728,570,777),'phone')
+    return image
+
+
+def render_photo_picker(photos,paths,config,target='panel',page=0,total=1,message=''):
+    from PIL import ImageOps
+    image,d=section_frame('选择待机图片' if target=='standby' else '选择模块图片',message or '轻触图片使用 · 手机图标可扫码上传')
+    selected=config['settings'].get('standby_photo' if target=='standby' else 'panel_photo')
+    for item,box in zip(photos,PHOTO_BOXES):
+        x,y,right,bottom=box; active=item['id']==selected
+        d.rounded_rectangle(box,radius=6,outline=0 if active else 140,width=3 if active else 1)
+        try:
+            with Image.open(paths[item['id']]) as source:
+                thumb=ImageOps.contain(source.convert('L'),(240,192))
+            image.paste(thumb,(x+(260-thumb.width)//2,y+8+(192-thumb.height)//2))
+        except (OSError,KeyError):
+            d.text((x+130,y+90),'图片不可用',font=font(18),fill=70,anchor='mm')
+        d.text((x+12,bottom-28),fit_text(d,item['name'],16,200),font=font(16),fill=0,anchor='lt')
+        if active: action_icon(d,'check',right-22,bottom-20,20)
+    if not photos:
+        action_icon(d,'phone',300,280,64)
+        d.text((300,360),'还没有图片',font=font(26,True),fill=0,anchor='mt')
+        d.text((300,414),'点下方手机图标，扫码上传后回来选择',font=font(18),fill=70,anchor='mt')
+    pager(d,page,total)
+    icon_button(d,(30,728,202,777),'back')
+    icon_button(d,(214,728,386,777),'phone')
+    return image
+
+WIFI_LIST_BOXES=[(30,200+i*72,570,260+i*72) for i in range(5)]
+WIFI_MANUAL=(30,580,570,640)
+WIFI_SCAN=(214,728,386,777)
+WIFI_TOGGLE=(398,728,570,777)
+
+def render_wifi(status,networks,busy=False,message=''):
+    details=status if isinstance(status,dict) else {}
+    enabled=details.get('enabled',details.get('wifi_enabled'))
+    current_ssid=str(details.get('ssid') or details.get('current_ssid') or '')
+    connected=bool(details.get('connected',bool(current_ssid)))
+    address=str(details.get('ip') or details.get('address') or '')
+    image,d=section_frame('Wi-Fi 设置','查看连接状态 · 点扫描结果连接')
+    if status is None or enabled is None:
+        status_label='Wi-Fi 状态未知'
+    elif not enabled:
+        status_label='Wi-Fi 已关闭'
+    else:
+        status_label='Wi-Fi 已启用 · '+('已连接' if connected else '未连接')
+    d.text((30,120),status_label,font=font(21,True),fill=0,anchor='lt')
+    if connected:
+        current_text='当前 SSID：'+(current_ssid or '已连接')+' · IP：'+(address or '--')
+    else:
+        current_text='当前未连接 · IP --'
+    d.text((30,151),fit_text(d,current_text,16,540),font=font(16),fill=70,anchor='lt')
+    notice=str(message or '')
+    if busy: notice=(notice+' · ' if notice else '')+'正在处理，请稍候…'
+    if not notice: notice='最多显示 5 个网络 · 开放网络无需密码'
+    d.text((30,177),fit_text(d,notice,14,540),font=font(14),fill=0 if message else 85,anchor='lt')
+
+    network_list=list(networks or [])
+    if not network_list:
+        d.text((48,221),'暂无扫描结果，点下方扫描。',font=font(20),fill=85,anchor='lt')
+    for i,raw in enumerate(network_list[:5]):
+        network=raw if isinstance(raw,dict) else {'ssid':str(raw)}
+        box=WIFI_LIST_BOXES[i]
+        ssid=str(network.get('ssid') or network.get('name') or '隐藏网络')
+        is_current=bool(network.get('connected',network.get('current',False))) or (connected and ssid==current_ssid)
+        d.rounded_rectangle(box,radius=6,fill=232 if is_current else 255,outline=0 if is_current else 135,width=2)
+        d.text((48,box[1]+10),fit_text(d,ssid,20,340,True),font=font(20,True),fill=0,anchor='lt')
+        signal=network.get('signal',network.get('rssi'))
+        try:
+            number=float(signal)
+            signal_label=f'{round(number)}%' if 0<=number<=100 else f'{round(number)} dBm'
+        except (TypeError,ValueError,OverflowError):
+            signal_label=str(signal or '--')
+        d.text((550,box[1]+13),'信号 '+signal_label,font=font(15,True),fill=65,anchor='rt')
+        security=network.get('security')
+        encrypted=bool(network.get('encrypted',network.get('secure',security not in (None,'','open','Open','none','NONE'))))
+        d.text((48,box[1]+39),'已加密' if encrypted else '开放网络',font=font(14),fill=80,anchor='lt')
+        if is_current:
+            d.text((550,box[1]+39),'当前连接',font=font(14,True),fill=0,anchor='rt')
+
+    d.rounded_rectangle(WIFI_MANUAL,radius=6,outline=0,width=2)
+    action_icon(d,'edit',60,610,25)
+    d.text((92,610),'手动输入 SSID',font=font(20,True),fill=0,anchor='lm')
+    action_icon(d,'next',544,610,18,85)
+    _draw_buttons(d,('返回','扫描','关闭WiFi' if enabled else '开启WiFi'))
+    return image
+
+def render_screensaver(config,state,current=None,power_available=True):
+    current=current or now()
+    settings=config.get('settings') or {}
+    time_format=settings.get('time_format','24')
+    image=Image.new('L',(600,800),255)
+    d=ImageDraw.Draw(image)
+    d.text((30,29),f'{current.year}年{current.month}月',font=font(34,True),fill=0,anchor='lt')
+    at=parsed_time(state.get('battery_at'))
+    fresh=at is not None and 0<=(current-at).total_seconds()<120
+    try: pct=max(0,min(100,int(state['battery']))) if fresh and state.get('battery') is not None else None
+    except (TypeError,ValueError,OverflowError): pct=None
+    charging_at=parsed_time(state.get('charging_at'))
+    charging=state.get('charging') is True and charging_at is not None and 0<=(current-charging_at).total_seconds()<120
+    label=f'{pct}%' if pct is not None else '--%'
+    d.text((570,30),label,font=font(30,True,True),fill=0,anchor='rt')
+    bx=round(570-d.textlength(label,font=font(30,True,True))-61)
+    d.rounded_rectangle((bx,35,bx+43,57),radius=3,outline=0,width=2)
+    d.rectangle((bx+45,41,bx+48,51),fill=0)
+    if pct:
+        d.rectangle((bx+4,39,bx+4+round(35*pct/100),53),fill=0)
+    caption='充电中' if charging else '请充电' if pct is not None and pct<=15 else '电量' if pct is not None else '暂未读取'
+    if charging: d.polygon([(bx+25,67),(bx+15,79),(bx+22,79),(bx+18,89),(bx+30,75),(bx+23,75)],fill=0)
+    d.text((570,71),caption,font=font(16,True),fill=60,anchor='rt')
+    lunar,festivals,term=calendar_labels(current.date())
+    date_label=f'今天 {current.day}日 · 星期'+ '一二三四五六日'[current.weekday()]
+    if lunar: date_label+=' · '+lunar
+    d.text((30,85),fit_text(d,date_label,16,385),font=font(16),fill=70,anchor='lt')
+    d.line((30,116,570,116),fill=0,width=2)
+    for col,label in enumerate('一二三四五六日'):
+        d.text((30+(col+0.5)*77,132),label,font=font(18,True),fill=0,anchor='mt')
+    by_day={}
+    events=all_events(config)
+    for entry in events: by_day.setdefault(entry['date'],[]).append(entry)
+    for row,week in enumerate(month_days(current.year,current.month)):
+        for col,day in enumerate(week):
+            x=30+col*77; y=163+row*63
+            d.rectangle((x,y,x+77,y+63),outline=185,width=1)
+            if not day: continue
+            today=day==current.day
+            if today: d.ellipse((x+20,y+1,x+58,y+39),fill=0)
+            d.text((x+39,y+7),str(day),font=font(22,True,True),fill=255 if today else 0,anchor='mt')
+            entries=by_day.get(f'{current.year:04}-{current.month:02}-{day:02}',[])
+            if entries:
+                if len(entries)>1:
+                    d.text((x+71,y+7),'+'+str(len(entries)-1),font=font(10,True,True),fill=50,anchor='rt')
+                title=' '.join(str(entries[0].get('title','')).split())
+                d.text((x+39,y+42),fit_text(d,title,12,67),font=font(12),fill=0,anchor='mt')
+    d.text((30,559),'今日及以后',font=font(20,True),fill=0,anchor='lt')
+    upcoming=[entry for entry in events if entry['date']>=current.date().isoformat()]
+    d.text((570,562),str(len(upcoming))+' 项',font=font(15),fill=85,anchor='rt')
+    if not upcoming:
+        d.text((300,650),'暂无安排，享受今天',font=font(24),fill=85,anchor='mm')
+    for i,entry in enumerate(upcoming[:3]):
+        y=598+i*47
+        when=datetime.strptime(entry['date'],'%Y-%m-%d')
+        day_label='今天' if when.date()==current.date() else f'{when.month}/{when.day}'
+        d.text((30,y),day_label,font=font(18,True),fill=0,anchor='lt')
+        clock=event_time(entry.get('time'),time_format) if entry.get('time') else '全天'
+        d.text((105,y+2),clock,font=font(15,True,True),fill=60,anchor='lt')
+        title=' '.join(str(entry.get('title','')).split())
+        d.text((215,y),fit_text(d,title,19,355,True),font=font(19,True),fill=0,anchor='lt')
+        d.line((30,y+35,570,y+35),fill=210,width=1)
+    d.line((30,748,570,748),fill=0,width=1)
+    hint=('电源键唤醒 · 电量为入眠时记录' if state.get('system_sleep') else
+          '电源键 / 轻触返回' if power_available else '轻触屏幕返回看板')
+    d.text((30,765),'省电日历',font=font(15),fill=75,anchor='lt')
+    d.text((570,765),hint,font=font(15),fill=75,anchor='rt')
+    return image
+
+def render_module_picker(config):
+    import modules
+    image,d=section_frame('选择模块','仅更换中间区域 · 更多设置请扫码')
+    for index,(key,title,description,_) in enumerate(modules.CATALOG):
+        y=120+index*90
+        active=key==modules.selected(config)
+        if active: d.rounded_rectangle((30,y,570,y+78),radius=6,fill=0)
+        d.text((48,y+13),title,font=font(23,True),fill=255 if active else 0,anchor='lt')
+        d.text((48,y+49),fit_text(d,description,15,500),font=font(15),fill=255 if active else 75,anchor='lt')
+        if active: action_icon(d,'check',542,y+26,23,255)
+    icon_button(d,(30,728,202,777),'back')
+    icon_button(d,(214,728,386,777),'phone')
+    return image
+
+def render_sleep_photo(path,system=False):
+    from PIL import ImageOps
+    image=Image.new('L',(600,800),255)
+    try:
+        with Image.open(path) as source:
+            photo=ImageOps.fit(ImageOps.exif_transpose(source).convert('L'),(600,800),method=Image.Resampling.LANCZOS if hasattr(Image,'Resampling') else Image.LANCZOS,centering=(.5,.5))
+        image.paste(photo,(0,0))
+    except OSError: pass
+    return image
+
 def render(config, state, current=None):
     current=current or now()
+    settings=config.get('settings') or {}
+    time_format=settings.get('time_format','24')
+    if time_format not in ('12','24'): time_format='24'
     image=Image.new('L',(600,800),255)
     d=ImageDraw.Draw(image)
     def text(x,y,value,size=22,bold=False,fill=0,numeric=False):
@@ -1019,7 +1318,11 @@ def render(config, state, current=None):
             value=fit_text(d,line,16,136)
             d.text((303,annotation_y+i*20),value,font=font(16),fill=75,anchor='mt')
     d.text((303,78),'星期'+'一二三四五六日'[current.weekday()],font=font(25,True),fill=0,anchor='mt')
-    rtext(570,61,current.strftime('%H:%M'),54,True,numeric=True)
+    main_clock=clock_text(current,time_format)
+    clock_size=48 if time_format=='12' else 54
+    while clock_size>46 and d.textlength(main_clock,font=font(clock_size,True,True))>190:
+        clock_size-=1
+    rtext(570,61,main_clock,clock_size,True,numeric=True)
     timer=state.get('pomodoro') or {}
     timer_state=timer.get('state','idle')
     timer_hint={'idle':'点时间 · 番茄钟','done':'专注完成 · 点此查看','paused':'番茄钟已暂停'}.get(timer_state)
@@ -1042,18 +1345,23 @@ def render(config, state, current=None):
         if i<2: d.line((356,y+41,570,y+41),fill=215,width=1)
     rule(330)
     text(30,346,'AI 金融资讯',23,True)
-    news=news_items(state.get('news'))
+    news_sources=[label for key,label in (('news_wallstreetcn','华尔街见闻'),('news_eastmoney','东方财富')) if settings.get(key,True)]
+    news=enabled_news(config,news_items(state.get('news')))
     news_at=parsed_time(state.get('news_at'))
     news_stale=bool(state.get('news_error')) or not news_at or (current-news_at).total_seconds()>7200
-    if state.get('news_refreshing'):
-        rtext(570,352,'正在刷新…',14,fill=0)
-    else: action_icon(d,'refresh',552,359,28)
+    if news_sources:
+        if state.get('news_refreshing'):
+            rtext(570,352,'正在刷新…',14,fill=0)
+        else: action_icon(d,'refresh',552,359,28)
     if news:
         for i,item in enumerate(news[:6]):
             y=384+i*26
             text(30,y,str(i+1),16,True,fill=0 if i<3 else 110,numeric=True)
             text(58,y,fit_text(d,item['name'],16,445),16)
-            rtext(570,y+1,fmt_news_time(item.get('time'),current),13,fill=110,numeric=True)
+            rtext(570,y+1,fmt_news_time(item.get('time'),current,time_format),13,fill=110,numeric=True)
+    elif not news_sources:
+        text(30,400,'资讯获取已关闭',22,True)
+        text(30,438,'可在设置中重新开启',16,fill=80)
     else:
         text(30,400,'资讯正在连接',22,True)
         text(30,438,'每小时自动更新，联网后显示。',16,fill=80)
@@ -1068,12 +1376,21 @@ def render(config, state, current=None):
     else:
         for i,event in enumerate(future[:5]):
             x=30+(i%2)*280; y=596+(i//2)*56
-            dlabel=event['date'][5:].replace('-','/')+' '+(event.get('time') or '全天')
+            dlabel=event['date'][5:].replace('-','/')+' '+event_time(event.get('time'),time_format)
             text(x,y,dlabel,14,True)
             text(x,y+23,fit_text(d,event['title'],18,258),18)
     draw_main_icons(d)
     d.line((30,767,570,767),fill=140,width=1)
-    stamp=current.strftime('%m-%d %H:%M')
+    stamp=current.strftime('%m-%d')+' '+clock_text(current,time_format)
     text(30,779,f'画面更新 {stamp}',12,fill=70)
-    rtext(570,779,'天气 / Open-Meteo · 资讯 / 华尔街见闻',12,fill=70)
+    source_label=' · '.join(news_sources) if news_sources else '已关闭'
+    rtext(570,779,'天气 / Open-Meteo · 资讯 / '+source_label,12,fill=70)
+    panel=state.get('panel') or {'kind':'finance'}
+    if panel['kind']!='finance':
+        import modules
+        modules.paint_panel(image,panel,current)
+        d.rectangle((250,773,575,799),fill=255)
+        rtext(570,779,'天气 / Open-Meteo · '+panel.get('title',''),12,fill=70)
+    else:
+        action_icon(d,'settings',482,359,26)
     return image

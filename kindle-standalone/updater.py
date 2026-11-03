@@ -1,8 +1,8 @@
 """Bounded LAN packages and recoverable updates. This bootstrap stays USB-managed."""
-import ast,hashlib,io,json,os,re,shutil,signal,subprocess,sys,time,uuid,zipfile
+import ast,errno,hashlib,io,json,os,re,shutil,signal,subprocess,sys,time,uuid,zipfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent
-CORE=('app.py','renderer.py','pages.py','store.py','native_input.py')
+CORE=('app.py','renderer.py','pages.py','store.py','native_input.py','device_control.py','modules.py','phone.py')
 MAX_PACKAGE=4*1024*1024
 MAX_EXPANDED=8*1024*1024
 
@@ -21,7 +21,7 @@ def validate(payload):
     try:
         with zipfile.ZipFile(io.BytesIO(payload)) as z:
             names=z.namelist()
-            if len(names)!=len(set(names)) or len(names)>40: raise ValueError('文件列表不正确。')
+            if len(names)!=len(set(names)) or len(names)>48: raise ValueError('文件列表不正确。')
             if 'manifest.json' not in names or any(n!='manifest.json' and not allowed(n) for n in names):
                 raise ValueError('更新包包含不允许修改的文件。')
             if any(i.file_size>2*1024*1024 for i in z.infolist()) or sum(i.file_size for i in z.infolist())>MAX_EXPANDED:
@@ -85,7 +85,13 @@ def stage(payload,root=ROOT):
 
 def state(root=ROOT):
     path=Path(root)/'data/update-pending.json'
-    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+    try: return json.loads(path.read_text(encoding='utf-8'))
+    except FileNotFoundError: return None
+    except OSError as error:
+        # USB export invalidates the filesystem while we still supervise the
+        # child. Keep supervising; do not crash and orphan the dashboard.
+        if error.errno in (errno.EIO,errno.ENODEV,getattr(errno,'ESTALE',116)): return None
+        raise
 
 def folder_for(root,s):
     if not re.fullmatch(r'[a-f0-9]{32}',s['id']): raise ValueError('Invalid update id')
@@ -154,13 +160,20 @@ def supervise(root=ROOT):
             return result
         child=subprocess.Popen([sys.executable,'-B','-u',str(root/'app.py')],cwd=str(root))
         started=time.monotonic(); stop_at=None
-        while child.poll() is None:
-            if (root/'data/update-pending.json').exists() and time.monotonic()-started>65:
-                pending=state(root)
-                if pending and pending['phase']=='trial' and not stop_at: child.terminate(); stop_at=time.monotonic()
-            if stopping and stop_at is None: stop_at=time.monotonic()
-            if stop_at and time.monotonic()-stop_at>5: child.kill()
-            time.sleep(0.25)
+        try:
+            while child.poll() is None:
+                if time.monotonic()-started>65:
+                    pending=state(root)
+                    if pending and pending['phase']=='trial' and not stop_at: child.terminate(); stop_at=time.monotonic()
+                if stopping and stop_at is None: stop_at=time.monotonic()
+                if stop_at and time.monotonic()-stop_at>5: child.kill()
+                time.sleep(0.25)
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                try: child.wait(timeout=6)
+                except subprocess.TimeoutExpired:
+                    child.kill(); child.wait(timeout=3)
         code=child.returncode
         if stopping: return 0
         if code==75:

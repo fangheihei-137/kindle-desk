@@ -22,6 +22,46 @@ def disk_lock(path):
                 msvcrt.locking(handle.fileno(),msvcrt.LK_UNLCK,1)
             else: fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
 
+DEFAULT_SETTINGS={
+    'time_format':'24',
+    'news_wallstreetcn':True,
+    'news_eastmoney':True,
+    'idle_minutes':15,
+    'standby_wifi':True,
+    'weather_interval':15,
+    'full_refresh':10,
+    'panel_module':'finance',
+    'module_interval':30,
+    'sleep_display':'calendar',
+    'panel_photo':'',
+    'standby_photo':'',
+}
+BOOLEAN_SETTINGS={'news_wallstreetcn','news_eastmoney','standby_wifi'}
+CHOICE_SETTINGS={
+    'time_format':('12','24'),
+    'idle_minutes':(0,5,15,30,60),
+    'weather_interval':(15,30,60),
+    'full_refresh':(5,10,20,50),
+    'panel_module':('finance','news','weibo','usage','photo'),
+    'module_interval':(15,30,60),
+    'sleep_display':('calendar','photo'),
+}
+
+def setting_value(key,value):
+    if key=='panel_module' and value in ('codex','deepseek'): value='usage'
+    if key in ('panel_photo','standby_photo'):
+        import re
+        if isinstance(value,str) and (not value or re.fullmatch(r'[a-f0-9]{24}',value)): return value
+    elif key in BOOLEAN_SETTINGS:
+        if value in (True,'1','true','on'): return True
+        if value in (False,'0','false','off'): return False
+    elif key in CHOICE_SETTINGS:
+        choices=CHOICE_SETTINGS[key]
+        for choice in choices:
+            if value==choice or str(value)==str(choice): return choice
+    else: raise ValueError('未知设置项。')
+    raise ValueError('设置值无效。')
+
 class Conflict(ValueError):
     pass
 
@@ -56,6 +96,10 @@ class Store:
             result.setdefault('revision',0)
             result.setdefault('todos',[])
             if not isinstance(result['todos'],list): raise ValueError('待办文件格式不正确。')
+            settings=result.setdefault('settings',{})
+            if not isinstance(settings,dict): raise ValueError('设置文件格式不正确。')
+            for key,default in DEFAULT_SETTINGS.items():
+                settings[key]=setting_value(key,settings.get(key,default))
             return result
 
     def change(self,revision,action,data):
@@ -99,11 +143,28 @@ class Store:
                 city=str(data.get('city','')).strip()
                 if len(city)>80: raise ValueError('城市名称太长。')
                 value['city']=city
+            elif action=='settings':
+                updates=data.get('settings')
+                if not isinstance(updates,dict) or not updates: raise ValueError('请选择要修改的设置。')
+                for key,item in updates.items():
+                    if key not in DEFAULT_SETTINGS: raise ValueError('未知设置项。')
+                    value['settings'][key]=setting_value(key,item)
+                if 'city' in data:
+                    city=str(data['city']).strip()
+                    if len(city)>80: raise ValueError('城市名称太长。')
+                    value['city']=city
+            elif action=='setting':
+                key=str(data.get('key',''))
+                if key not in DEFAULT_SETTINGS: raise ValueError('未知设置项。')
+                updated=setting_value(key,data.get('value'))
+                if value['settings'][key]==updated: return copy.deepcopy(value)
+                value['settings'][key]=updated
             else: raise ValueError('不支持的操作。')
             value['revision']+=1
             atomic_json(self.path.with_suffix('.backup.json'),self.read())
             atomic_json(self.path,value)
             return copy.deepcopy(value)
+
 
 def initialize_data(path):
     """First boot only: each installation gets its own random pairing credential."""

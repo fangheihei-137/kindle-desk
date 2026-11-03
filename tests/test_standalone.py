@@ -88,7 +88,7 @@ class Tests(unittest.TestCase):
             return 0,'0'
         with patch.object(app,'command',command),patch.object(app.time,'sleep'):
             frame=self.root/'frame.png'; renderer.Image.new('L',(600,800),255).save(frame)
-            device=app.Device(None); device.display(frame)
+            device=app.Device(app.Application(self.root)); device.display(frame)
             self.assertLess(calls.index(['initctl','stop','lab126_gui']),calls.index(['eips','-f','-g',str(frame)]))
             device.editor('http://127.0.0.1:8766/test/?device=kindle')
             self.assertIn(['lipc-set-prop','com.lab126.browser','gotoURL','http://127.0.0.1:8766/test/?device=kindle'],calls)

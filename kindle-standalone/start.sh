@@ -39,15 +39,13 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     mkdir "$LOCK" || exit 3
 fi
 echo $$ > "$LOCK/pid"
-OLD_PREVENT=$(lipc-get-prop com.lab126.powerd preventScreenSaver 2>/dev/null)
-case "$OLD_PREVENT" in 0|1) ;; *) OLD_PREVENT=0;; esac
 LAUNCHED=0
 cleanup() {
     RESULT=$?
     trap - EXIT INT TERM HUP
     printf 'STANDALONE EXIT %s code=%s\n' "$(date)" "$RESULT"
     if [ "$LAUNCHED" = 1 ]; then
-        lipc-set-prop com.lab126.powerd preventScreenSaver "$OLD_PREVENT"
+        lipc-set-prop com.lab126.powerd preventScreenSaver 0
         initctl start lab126_gui 2>/dev/null
     fi
     rm -f "$LOCK/pid" /tmp/kindle-standalone-show
